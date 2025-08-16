@@ -1,0 +1,22 @@
+{
+  "name": "whiz-lite-bot-js",
+  "version": "1.0.0",
+  "description": "A Telegram bot to upload images to Telegra.ph",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "keywords": [
+    "telegram",
+    "bot",
+    "telegraph"
+  ],
+  "author": "Josphat",
+  "license": "ISC",
+  "dependencies": {
+    "axios": "^1.7.2",
+    "dotenv": "^16.4.5",
+    "form-data": "^4.0.0",
+    "node-telegram-bot-api": "^0.66.0"
+  }
+}
