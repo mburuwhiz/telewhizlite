@@ -3,12 +3,12 @@ const TelegramBot = require('node-telegram-bot-api');
 const axios = require('axios');
 const FormData = require('form-data');
 const path = require('path');
-const express = require('express'); // For the web server
+const express = require('express');
 require('dotenv').config();
 
 // --- Express App Setup ---
 const app = express();
-const PORT = process.env.PORT || 3000; // Render provides the PORT env var
+const PORT = process.env.PORT || 3000;
 
 // --- Configuration ---
 const BOT_TOKEN = process.env.BOT_TOKEN;
@@ -33,9 +33,7 @@ const bot = new TelegramBot(BOT_TOKEN, { polling: true });
 
 // --- Helper Functions ---
 function isRateLimited(userId) {
-  if (userId === OWNER_ID) {
-    return { isLimited: false, timeToWaitMin: 0 };
-  }
+  if (userId === OWNER_ID) return { isLimited: false };
   const now = Date.now();
   const userTimestamps = userUploads[userId] || [];
   const relevantTimestamps = userTimestamps.filter(ts => now - ts < TIME_WINDOW_MS);
@@ -47,13 +45,11 @@ function isRateLimited(userId) {
     const timeToWaitMin = Math.ceil(timeToWaitMs / 1000 / 60);
     return { isLimited: true, timeToWaitMin };
   }
-  return { isLimited: false, timeToWaitMin: 0 };
+  return { isLimited: false };
 }
 
 function recordUpload(userId) {
-  if (!userUploads[userId]) {
-    userUploads[userId] = [];
-  }
+  if (!userUploads[userId]) userUploads[userId] = [];
   userUploads[userId].push(Date.now());
 }
 
@@ -63,7 +59,11 @@ async function uploadToTelegraph(buffer, filename) {
     form.append('file', buffer, filename);
 
     const response = await axios.post('https://telegra.ph/upload', form, {
-      headers: { ...form.getHeaders() },
+      headers: {
+        ...form.getHeaders(),
+        // FINAL FIX: Add a browser-like User-Agent to avoid being blocked.
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/88.0.4324.190 Safari/537.36'
+      },
       timeout: 30000,
     });
 
@@ -93,86 +93,56 @@ function streamToBuffer(stream) {
   });
 }
 
-// --- NEW: Web Server Logic ---
-// This tells Express to serve your website files (index.html, style.css)
+// --- Web Server Logic ---
 app.use(express.static(path.join(__dirname)));
-
-// Main route serves your landing page
-app.get('/', (req, res) => {
-  res.sendFile(path.join(__dirname, 'index.html'));
-});
-
-// Start the web server
-app.listen(PORT, () => {
-  console.log(`✅ Web server is live and listening on port ${PORT}`);
-});
-
+app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'index.html')));
+app.listen(PORT, () => console.log(`✅ Web server is live and listening on port ${PORT}`));
 
 // --- Bot Event Handlers ---
 bot.onText(/\/start/, (msg) => {
   const userName = msg.from.first_name;
-  bot.sendMessage(
-    msg.chat.id,
-    `👋 Hello, ${userName}!\n\n` +
-    "I am <b>WHIZ LITE</b>, your personal image uploader.\n\n" +
-    "Simply send me any image, and I will upload it to Telegra.ph.",
-    { parse_mode: 'HTML' }
-  );
+  bot.sendMessage(msg.chat.id, `👋 Hello, ${userName}!\n\nI am <b>WHIZ LITE</b>...`, { parse_mode: 'HTML' });
 });
 
 bot.on('photo', async (msg) => {
   if (msg.chat.type !== 'private') return;
   const userId = msg.from.id;
   const chatId = msg.chat.id;
-
   const { isLimited, timeToWaitMin } = isRateLimited(userId);
   if (isLimited) {
-    bot.sendMessage(chatId, `⚠️ Rate limit reached! Please wait ~${timeToWaitMin}m.`);
-    return;
+    return bot.sendMessage(chatId, `⚠️ Rate limit reached! Please wait ~${timeToWaitMin}m.`);
   }
-
   let processingMessage;
   try {
     processingMessage = await bot.sendMessage(chatId, '🔄 Processing your image...');
-    
     const bestQualityPhoto = msg.photo[msg.photo.length - 1];
     const fileId = bestQualityPhoto.file_id;
     const fileDetails = await bot.getFile(fileId);
     const filename = path.basename(fileDetails.file_path);
-    
     console.log(`Attempting to upload: ${filename}, Size: ${fileDetails.file_size} bytes`);
-    
     const photoStream = bot.getFileStream(fileId);
     const imageBuffer = await streamToBuffer(photoStream);
     const telegraphLink = await uploadToTelegraph(imageBuffer, filename);
-
     if (telegraphLink) {
-      await bot.editMessageText(
-        `✅ **Upload Successful!**\n\n🔗 Here is your permanent link:\n${telegraphLink}`, {
-          chat_id: chatId, message_id: processingMessage.message_id, parse_mode: 'Markdown'
-        }
-      );
+      await bot.editMessageText(`✅ **Upload Successful!**\n\n🔗 Here is your permanent link:\n${telegraphLink}`, {
+        chat_id: chatId, message_id: processingMessage.message_id, parse_mode: 'Markdown'
+      });
       recordUpload(userId);
     } else {
-      await bot.editMessageText(
-        `❌ **Upload Failed.**\n\nFile might be too large (> 5MB) or in an unsupported format.`, {
-          chat_id: chatId, message_id: processingMessage.message_id
-        }
-      );
+      await bot.editMessageText(`❌ **Upload Failed.**\n\nFile might be too large (> 5MB) or in an unsupported format.`, {
+        chat_id: chatId, message_id: processingMessage.message_id
+      });
     }
   } catch (error) {
     console.error(`Error in handle_image for user ${userId}:`, error.message);
     if (processingMessage) {
       await bot.editMessageText('An unexpected error occurred.', {
-          chat_id: chatId, message_id: processingMessage.message_id
-        }
-      );
+        chat_id: chatId, message_id: processingMessage.message_id
+      });
     }
   }
 });
 
-bot.on('polling_error', (error) => {
-    console.error('Polling error:', error.code, '-', error.message);
-});
+bot.on('polling_error', (error) => console.error('Polling error:', error.message));
 
 console.log('🤖 WHIZ LITE bot is starting to poll for updates...');
